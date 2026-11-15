@@ -20,27 +20,47 @@ class OverlayView(context: Context) : View(context) {
     private val paintHpFg = Paint().apply { style = Paint.Style.FILL; color = Color.GREEN }
 
     private var players: List<Player> = emptyList()
-    private var camLoc = Vec3(); private var camRot = Vec3(); private var camFov = 90f
-    private var screenW = 0; private var screenH = 0
+    private var camLoc = Vec3()
+    private var camRot = Vec3()
+    private var camFov = 90f
+    private var screenW = 0
+    private var screenH = 0
+
+    @Volatile
+    private var running = true
 
     private data class Vec3(var x: Float = 0f, var y: Float = 0f, var z: Float = 0f)
     private data class Player(var team: Int = 0, var hp: Int = 0, var head: Vec3 = Vec3(), var origin: Vec3 = Vec3())
 
     init {
         thread(name = "shm-reader") {
-            val file = try { RandomAccessFile("/dev/shm/ff_state", "r") } catch (e: Exception) { null }
-            while (!isDetached) {
+            var file: RandomAccessFile? = null
+            while (running) {
+                if (file == null) {
+                    file = try { RandomAccessFile("/dev/shm/ff_state", "r") } catch (e: Exception) { null }
+                }
                 if (file != null) {
                     try {
-                        file.seek(0); buf.clear()
-                        if (file.channel.read(buf) >= headerSize) parse()
-                        postInvalidate()
-                    } catch (_: Exception) {}
+                        file.seek(0)
+                        buf.clear()
+                        if (file.channel.read(buf) >= headerSize) {
+                            parse()
+                            postInvalidate()
+                        }
+                    } catch (_: Exception) {
+                        try { file.close() } catch (_: Exception) {}
+                        file = null
+                    }
                 }
                 Thread.sleep(16)
             }
-            file?.close()
+            try { file?.close() } catch (_: Exception) {}
         }
+    }
+
+    override fun onDetachedFromWindow() {
+        running = false
+        super.onDetachedFromWindow()
     }
 
     private fun parse() {
@@ -53,7 +73,8 @@ class OverlayView(context: Context) : View(context) {
         val list = ArrayList<Player>(count)
         for (i in 0 until count) {
             val p = Player()
-            p.team = buf.int; p.hp = buf.int
+            p.team = buf.int
+            p.hp = buf.int
             p.head = Vec3(buf.float, buf.float, buf.float)
             p.origin = Vec3(buf.float, buf.float, buf.float)
             list.add(p)
@@ -61,7 +82,10 @@ class OverlayView(context: Context) : View(context) {
         players = list
     }
 
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) { screenW = w; screenH = h }
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        screenW = w
+        screenH = h
+    }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -81,11 +105,15 @@ class OverlayView(context: Context) : View(context) {
     }
 
     private fun worldToScreen(w: Vec3): Pair<Float, Float>? {
-        val dx = w.x - camLoc.x; val dy = w.y - camLoc.y; val dz = w.z - camLoc.z
+        val dx = w.x - camLoc.x
+        val dy = w.y - camLoc.y
+        val dz = w.z - camLoc.z
         val pitch = Math.toRadians(camRot.x.toDouble()).toFloat()
         val yaw = Math.toRadians(camRot.y.toDouble()).toFloat()
-        val cp = kotlin.math.cos(pitch); val sp = kotlin.math.sin(pitch)
-        val cy = kotlin.math.cos(yaw); val sy = kotlin.math.sin(yaw)
+        val cp = kotlin.math.cos(pitch)
+        val sp = kotlin.math.sin(pitch)
+        val cy = kotlin.math.cos(yaw)
+        val sy = kotlin.math.sin(yaw)
         val x1 = dx * cy - dz * sy
         val z1 = dx * sy + dz * cy
         val y1 = dy * cp - z1 * sp
